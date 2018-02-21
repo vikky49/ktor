@@ -1,6 +1,7 @@
 package io.ktor.client.features
 
 import io.ktor.client.*
+import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.response.*
 import io.ktor.http.*
@@ -22,15 +23,13 @@ class HttpRedirect(
         override suspend fun prepare(block: Config.() -> Unit): HttpRedirect = HttpRedirect(Config().apply(block).maxJumps)
 
         override fun install(feature: HttpRedirect, scope: HttpClient) {
-            scope.responsePipeline.intercept(HttpResponsePipeline.Receive) { (_, response) ->
+            scope.responsePipeline.intercept(HttpResponsePipeline.Receive) { (expectedType, response) ->
                 if (response !is HttpResponse || !response.status.isRedirect()) return@intercept
                 val jumps = response.call.request.attributes.getOrNull(JUMPS) ?: 0
 
                 if (jumps == feature.maxJumps) return@intercept
                 val location = response.headers[HttpHeaders.Location] ?: return@intercept
 
-                val request = request {
-                }
             }
         }
     }
