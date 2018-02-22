@@ -3,18 +3,15 @@ package io.ktor.client.features
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
-import io.ktor.client.response.*
 import io.ktor.http.*
 import io.ktor.util.*
-
-private val JUMPS = AttributeKey<Int>("HttpRedirectJumps")
 
 class HttpRedirect(
         val maxJumps: Int
 ) {
 
     class Config {
-        var maxJumps = Int.MAX_VALUE
+        var maxJumps: Int = Int.MAX_VALUE
     }
 
     companion object Feature : HttpClientFeature<Config, HttpRedirect> {
@@ -23,16 +20,32 @@ class HttpRedirect(
         override suspend fun prepare(block: Config.() -> Unit): HttpRedirect = HttpRedirect(Config().apply(block).maxJumps)
 
         override fun install(feature: HttpRedirect, scope: HttpClient) {
-            scope.responsePipeline.intercept(HttpResponsePipeline.Receive) { (expectedType, response) ->
-                if (response !is HttpResponse || !response.status.isRedirect()) return@intercept
-                val jumps = response.call.request.attributes.getOrNull(JUMPS) ?: 0
+            scope.sendPipeline.intercept scope@{ execute: suspend (HttpRequestData) -> HttpClientCall, origin: HttpRequestData ->
+                var request = origin
+                repeat(feature.maxJumps) {
+                    val call = execute(request)
+                    if (!call.response.status.isRedirect()) return@scope call
+                    val location = call.response.headers[HttpHeaders.Location] ?: return@scope call
 
-                if (jumps == feature.maxJumps) return@intercept
-                val location = response.headers[HttpHeaders.Location] ?: return@intercept
+                    val oldUrl = request.url
+                    request = HttpRequestBuilder().apply {
+                        takeFrom(origin)
+                        url.takeFrom(location)
+                    }.build()
 
+                    if (oldUrl == request.url) error("Redirect loop: $oldUrl")
+                }
+
+                error("Fail to redirect")
             }
         }
     }
 }
 
-private fun HttpStatusCode.isRedirect(): Boolean = TODO()
+private fun HttpStatusCode.isRedirect(): Boolean = when (this) {
+    HttpStatusCode.MovedPermanently,
+    HttpStatusCode.Found,
+    HttpStatusCode.TemporaryRedirect,
+    HttpStatusCode.PermanentRedirect -> true
+    else -> false
+}
